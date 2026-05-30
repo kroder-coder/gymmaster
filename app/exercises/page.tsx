@@ -5,7 +5,13 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Exercise, Category } from '@/lib/types'
-import { Plus, Search, X } from 'lucide-react'
+import { Plus, Search, X, PlayCircle } from 'lucide-react'
+
+function getYouTubeThumb(url: string | null): string | null {
+  if (!url) return null
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/)
+  return m ? `https://img.youtube.com/vi/${m[1]}/mqdefault.jpg` : null
+}
 
 const CATEGORIES: Category[] = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Other']
 
@@ -127,25 +133,46 @@ export default function Exercises() {
           <div key={cat}>
             <h2 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">{cat}</h2>
             <div className="space-y-1">
-              {items.map((ex) => (
+              {items.map((ex) => {
+                const thumb = getYouTubeThumb(ex.video_url)
+                return (
                 <div
                   key={ex.id}
-                  className="flex items-center justify-between px-4 py-3 bg-zinc-900 rounded-xl border border-zinc-800"
+                  className="flex items-center gap-3 px-3 py-2.5 bg-zinc-900 rounded-xl border border-zinc-800"
                 >
-                  <span className="text-sm">{ex.name}</span>
+                  {thumb ? (
+                    <img
+                      src={thumb}
+                      alt={ex.name}
+                      className="w-14 h-10 rounded-lg object-cover shrink-0 bg-zinc-800"
+                    />
+                  ) : (
+                    <div className="w-14 h-10 rounded-lg bg-zinc-800 shrink-0" />
+                  )}
+                  <span className="text-sm flex-1">{ex.name}</span>
                   <div className="flex items-center gap-2">
                     <span className={`text-xs px-2 py-0.5 rounded-full ${CATEGORY_COLORS[ex.category as Category]}`}>
                       {ex.category}
                     </span>
+                    {ex.video_url && (
+                      <button
+                        onClick={() => window.open(ex.video_url!, 'gymmaster-exercise')}
+                        className="text-zinc-500 hover:text-red-500 transition-colors"
+                        title="Watch video"
+                      >
+                        <PlayCircle size={16} />
+                      </button>
+                    )}
                     <button
                       onClick={() => deleteExercise(ex.id)}
-                      className="text-zinc-700 hover:text-red-400 transition-colors ml-1"
+                      className="text-zinc-700 hover:text-red-400 transition-colors"
                     >
                       <X size={14} />
                     </button>
                   </div>
                 </div>
-              ))}
+                )})}
+
             </div>
           </div>
         ))}

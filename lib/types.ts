@@ -4,6 +4,7 @@ export interface Exercise {
   id: string
   name: string
   category: Category
+  video_url: string | null
   created_at: string
 }
 
@@ -37,6 +38,7 @@ export interface LoggedExercise {
   exercise_name: string
   sets: LoggedSet[]
   routineName?: string
+  video_url?: string | null
 }
 
 export interface LoggedSet {

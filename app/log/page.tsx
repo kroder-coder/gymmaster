@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { Exercise, LoggedExercise, LoggedSet, Routine, RoutineExercise } from '@/lib/types'
 import {
   Plus, Trash2, Check, X, Search, ChevronDown, ChevronUp,
-  BookOpen, Play, Pause, RotateCcw, Timer, Zap,
+  BookOpen, Play, Pause, RotateCcw, Timer, Zap, PlayCircle,
 } from 'lucide-react'
 
 const CATEGORIES = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Other']
@@ -127,7 +127,7 @@ export default function LogWorkout() {
   })
 
   function addExercise(ex: Exercise) {
-    setLogged((prev) => [...prev, { exercise_id: ex.id, exercise_name: ex.name, sets: [emptySet()] }])
+    setLogged((prev) => [...prev, { exercise_id: ex.id, exercise_name: ex.name, sets: [emptySet()], video_url: ex.video_url }])
     setShowPicker(false)
     setSearch('')
   }
@@ -141,7 +141,8 @@ export default function LogWorkout() {
       const sorted = [...routine.routine_exercises].sort((a, b) => a.sort_order - b.sort_order)
       sorted.forEach((re) => {
         if (!existingIds.has(re.exercise_id)) {
-          toAdd.push({ exercise_id: re.exercise_id, exercise_name: re.exercise_name, sets: [emptySet()], routineName: routine.name })
+          const exData = exercises.find((e) => e.id === re.exercise_id)
+          toAdd.push({ exercise_id: re.exercise_id, exercise_name: re.exercise_name, sets: [emptySet()], routineName: routine.name, video_url: exData?.video_url ?? null })
           existingIds.add(re.exercise_id)
         }
       })
@@ -247,6 +248,15 @@ export default function LogWorkout() {
           <span className="font-semibold">{ex.exercise_name}</span>
           <div className="flex items-center gap-2">
             <span className="text-zinc-500 text-sm">{ex.sets.length} set{ex.sets.length !== 1 ? 's' : ''}</span>
+            {ex.video_url && (
+              <button
+                onClick={(e) => { e.stopPropagation(); window.open(ex.video_url!, 'gymmaster-exercise') }}
+                className="text-zinc-500 hover:text-red-500 transition-colors"
+                title="Watch video"
+              >
+                <PlayCircle size={16} />
+              </button>
+            )}
             {collapsed[exIdx] ? <ChevronDown size={16} className="text-zinc-500" /> : <ChevronUp size={16} className="text-zinc-500" />}
             <button onClick={(e) => { e.stopPropagation(); removeExercise(exIdx) }} className="text-zinc-600 hover:text-red-400 transition-colors ml-1">
               <Trash2 size={16} />
