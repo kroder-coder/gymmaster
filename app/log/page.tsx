@@ -1,0 +1,290 @@
+'use client'
+
+export const dynamic = 'force-dynamic'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
+import { Exercise, LoggedExercise, LoggedSet } from '@/lib/types'
+import { Plus, Trash2, Check, X, Search, ChevronDown, ChevronUp } from 'lucide-react'
+
+const CATEGORIES = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Other']
+
+function emptySet(): LoggedSet {
+  return { reps: '', weight: '', weight_unit: 'kg' }
+}
+
+export default function LogWorkout() {
+  const router = useRouter()
+  const [exercises, setExercises] = useState<Exercise[]>([])
+  const [logged, setLogged] = useState<LoggedExercise[]>([])
+  const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [showPicker, setShowPicker] = useState(false)
+  const [search, setSearch] = useState('')
+  const [activeCategory, setActiveCategory] = useState('All')
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
+
+  useEffect(() => {
+    supabase
+      .from('exercises')
+      .select('*')
+      .order('name')
+      .then(({ data }) => setExercises(data ?? []))
+  }, [])
+
+  const filtered = exercises.filter((e) => {
+    const matchesSearch = e.name.toLowerCase().includes(search.toLowerCase())
+    const matchesCategory = activeCategory === 'All' || e.category === activeCategory
+    return matchesSearch && matchesCategory
+  })
+
+  function addExercise(ex: Exercise) {
+    setLogged((prev) => [...prev, { exercise_id: ex.id, exercise_name: ex.name, sets: [emptySet()] }])
+    setShowPicker(false)
+    setSearch('')
+  }
+
+  function removeExercise(i: number) {
+    setLogged((prev) => prev.filter((_, idx) => idx !== i))
+  }
+
+  function addSet(exIdx: number) {
+    setLogged((prev) =>
+      prev.map((ex, i) => (i === exIdx ? { ...ex, sets: [...ex.sets, emptySet()] } : ex))
+    )
+  }
+
+  function removeSet(exIdx: number, setIdx: number) {
+    setLogged((prev) =>
+      prev.map((ex, i) =>
+        i === exIdx ? { ...ex, sets: ex.sets.filter((_, j) => j !== setIdx) } : ex
+      )
+    )
+  }
+
+  function updateSet(exIdx: number, setIdx: number, field: keyof LoggedSet, value: string) {
+    setLogged((prev) =>
+      prev.map((ex, i) =>
+        i === exIdx
+          ? {
+              ...ex,
+              sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, [field]: value } : s)),
+            }
+          : ex
+      )
+    )
+  }
+
+  async function save() {
+    if (logged.length === 0) return
+    setSaving(true)
+
+    const { data: workout, error } = await supabase
+      .from('workouts')
+      .insert({ date: new Date().toISOString().split('T')[0], notes: notes || null })
+      .select()
+      .single()
+
+    if (error || !workout) {
+      alert('Failed to save workout. Check your Supabase connection.')
+      setSaving(false)
+      return
+    }
+
+    const rows = logged.flatMap((ex, _) =>
+      ex.sets.map((s, j) => ({
+        workout_id: workout.id,
+        exercise_id: ex.exercise_id,
+        exercise_name: ex.exercise_name,
+        set_number: j + 1,
+        reps: s.reps ? parseInt(s.reps) : null,
+        weight: s.weight ? parseFloat(s.weight) : null,
+        weight_unit: s.weight_unit,
+      }))
+    )
+
+    await supabase.from('workout_sets').insert(rows)
+    router.push('/')
+  }
+
+  const toggle = (i: number) => setCollapsed((prev) => ({ ...prev, [i]: !prev[i] }))
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">Log Workout</h1>
+        <span className="text-zinc-500 text-sm">
+          {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+        </span>
+      </div>
+
+      {logged.length === 0 && (
+        <div className="text-center py-10 text-zinc-500 border border-dashed border-zinc-800 rounded-2xl">
+          <p>No exercises added yet.</p>
+          <p className="text-sm mt-1">Tap &quot;Add Exercise&quot; to get started.</p>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {logged.map((ex, exIdx) => (
+          <div key={exIdx} className="bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden">
+            <div
+              className="flex items-center justify-between px-4 py-3 cursor-pointer"
+              onClick={() => toggle(exIdx)}
+            >
+              <span className="font-semibold">{ex.exercise_name}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-zinc-500 text-sm">{ex.sets.length} set{ex.sets.length !== 1 ? 's' : ''}</span>
+                {collapsed[exIdx] ? <ChevronDown size={16} className="text-zinc-500" /> : <ChevronUp size={16} className="text-zinc-500" />}
+                <button
+                  onClick={(e) => { e.stopPropagation(); removeExercise(exIdx) }}
+                  className="text-zinc-600 hover:text-red-400 transition-colors ml-1"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+
+            {!collapsed[exIdx] && (
+              <div className="px-4 pb-4 space-y-2">
+                <div className="grid grid-cols-12 gap-2 text-xs text-zinc-500 font-medium px-1">
+                  <span className="col-span-1">#</span>
+                  <span className="col-span-4">Reps</span>
+                  <span className="col-span-5">Weight</span>
+                  <span className="col-span-2"></span>
+                </div>
+
+                {ex.sets.map((s, setIdx) => (
+                  <div key={setIdx} className="grid grid-cols-12 gap-2 items-center">
+                    <span className="col-span-1 text-zinc-600 text-sm">{setIdx + 1}</span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={s.reps}
+                      onChange={(e) => updateSet(exIdx, setIdx, 'reps', e.target.value)}
+                      className="col-span-4 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
+                    />
+                    <div className="col-span-5 flex gap-1">
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={s.weight}
+                        onChange={(e) => updateSet(exIdx, setIdx, 'weight', e.target.value)}
+                        className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
+                      />
+                      <button
+                        onClick={() => updateSet(exIdx, setIdx, 'weight_unit', s.weight_unit === 'kg' ? 'lbs' : 'kg')}
+                        className="text-xs bg-zinc-700 hover:bg-zinc-600 rounded-lg px-2 py-2 text-zinc-300 transition-colors whitespace-nowrap"
+                      >
+                        {s.weight_unit}
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => removeSet(exIdx, setIdx)}
+                      className="col-span-2 flex justify-center text-zinc-700 hover:text-red-400 transition-colors"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => addSet(exIdx)}
+                  className="flex items-center gap-1.5 text-sm text-orange-400 hover:text-orange-300 transition-colors mt-1"
+                >
+                  <Plus size={15} /> Add Set
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={() => setShowPicker(true)}
+        className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-dashed border-zinc-700 hover:border-orange-500 text-zinc-400 hover:text-orange-400 transition-colors"
+      >
+        <Plus size={18} /> Add Exercise
+      </button>
+
+      <textarea
+        placeholder="Notes (optional)..."
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        rows={2}
+        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500 resize-none"
+      />
+
+      <button
+        onClick={save}
+        disabled={logged.length === 0 || saving}
+        className="flex items-center justify-center gap-2 w-full py-4 rounded-2xl bg-orange-500 hover:bg-orange-400 disabled:bg-zinc-800 disabled:text-zinc-600 transition-colors font-semibold text-white"
+      >
+        <Check size={20} />
+        {saving ? 'Saving...' : 'Save Workout'}
+      </button>
+
+      {/* Exercise picker modal */}
+      {showPicker && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-end">
+          <div className="bg-zinc-900 w-full max-w-lg mx-auto rounded-t-3xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+              <h2 className="font-semibold text-lg">Add Exercise</h2>
+              <button onClick={() => setShowPicker(false)} className="text-zinc-400 hover:text-white">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-zinc-800">
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Search exercises..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full bg-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
+                />
+              </div>
+              <div className="flex gap-2 mt-3 overflow-x-auto pb-1 scrollbar-hide">
+                {['All', ...CATEGORIES].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setActiveCategory(cat)}
+                    className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      activeCategory === cat
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="overflow-y-auto flex-1">
+              {filtered.length === 0 && (
+                <p className="text-center text-zinc-500 py-8 text-sm">No exercises found.</p>
+              )}
+              {filtered.map((ex) => (
+                <button
+                  key={ex.id}
+                  onClick={() => addExercise(ex)}
+                  className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-zinc-800 transition-colors border-b border-zinc-800/50 text-left"
+                >
+                  <span>{ex.name}</span>
+                  <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">{ex.category}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

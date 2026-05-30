@@ -1,0 +1,42 @@
+export type Category = 'Chest' | 'Back' | 'Legs' | 'Shoulders' | 'Arms' | 'Core' | 'Cardio' | 'Other'
+
+export interface Exercise {
+  id: string
+  name: string
+  category: Category
+  created_at: string
+}
+
+export interface Workout {
+  id: string
+  date: string
+  notes: string | null
+  created_at: string
+  workout_sets?: WorkoutSet[]
+}
+
+export interface WorkoutSet {
+  id: string
+  workout_id: string
+  exercise_id: string
+  exercise_name: string
+  set_number: number
+  reps: number | null
+  weight: number | null
+  weight_unit: 'kg' | 'lbs'
+  duration_seconds: number | null
+  distance_meters: number | null
+  created_at: string
+}
+
+export interface LoggedExercise {
+  exercise_id: string
+  exercise_name: string
+  sets: LoggedSet[]
+}
+
+export interface LoggedSet {
+  reps: string
+  weight: string
+  weight_unit: 'kg' | 'lbs'
+}
