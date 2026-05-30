@@ -6,7 +6,10 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Workout, WorkoutSet } from '@/lib/types'
-import { PlusCircle, ChevronRight, Flame, Clock, Timer, RefreshCw } from 'lucide-react'
+import {
+  PlusCircle, ChevronRight, ChevronLeft, Flame,
+  Clock, Timer, RefreshCw, Dumbbell,
+} from 'lucide-react'
 
 type WorkoutWithSets = Workout & { workout_sets: WorkoutSet[] }
 
@@ -28,12 +31,24 @@ const ARNOLD_QUOTES = [
   "No matter what you do in life, selling is part of it.",
 ]
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function toDateStr(y: number, m: number, d: number) {
+  return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
 export default function Dashboard() {
   const [recentWorkouts, setRecentWorkouts] = useState<WorkoutWithSets[]>([])
   const [loading, setLoading] = useState(true)
+  const [workoutCounts, setWorkoutCounts] = useState<Record<string, number>>({})
   const [now, setNow] = useState(new Date())
   const [quoteOffset, setQuoteOffset] = useState(0)
+  const [calMonth, setCalMonth] = useState(() => {
+    const t = new Date()
+    return new Date(t.getFullYear(), t.getMonth(), 1)
+  })
 
+  // Load recent workouts (for the list)
   useEffect(() => {
     async function load() {
       const { data } = await supabase
@@ -48,34 +63,56 @@ export default function Dashboard() {
     load()
   }, [])
 
+  // Load all workout dates for the calendar
+  useEffect(() => {
+    async function loadDates() {
+      const { data } = await supabase.from('workouts').select('date')
+      const counts: Record<string, number> = {}
+      data?.forEach((w) => {
+        counts[w.date] = (counts[w.date] ?? 0) + 1
+      })
+      setWorkoutCounts(counts)
+    }
+    loadDates()
+  }, [])
+
+  // Live clock
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(id)
   }, [])
 
-  const timeLabel = now.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-
-  const dateLabel = now.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  })
-
+  // ── Clock / quote ────────────────────────────────────────────────────────
+  const timeLabel = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
   const quoteIndex = (Math.floor(now.getTime() / (5 * 60 * 1000)) + quoteOffset) % ARNOLD_QUOTES.length
   const quote = ARNOLD_QUOTES[quoteIndex]
 
-  const uniqueExercises = (sets: WorkoutSet[]) =>
-    [...new Set(sets.map((s) => s.exercise_name))]
+  // ── Calendar helpers ─────────────────────────────────────────────────────
+  const calYear = calMonth.getFullYear()
+  const calMonthIdx = calMonth.getMonth()
+  const daysInMonth = new Date(calYear, calMonthIdx + 1, 0).getDate()
+  const firstDayOfWeek = new Date(calYear, calMonthIdx, 1).getDay()
+  const calLabel = calMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
+  const realToday = new Date()
+  const todayStr = toDateStr(realToday.getFullYear(), realToday.getMonth(), realToday.getDate())
+  const isCurrentMonth =
+    calYear === realToday.getFullYear() && calMonthIdx === realToday.getMonth()
+
+  function prevMonth() { setCalMonth(new Date(calYear, calMonthIdx - 1, 1)) }
+  function nextMonth() { setCalMonth(new Date(calYear, calMonthIdx + 1, 1)) }
+  function goToday()   { setCalMonth(new Date(realToday.getFullYear(), realToday.getMonth(), 1)) }
+
+  // ── Recent workout helpers ───────────────────────────────────────────────
+  const uniqueExercises = (sets: WorkoutSet[]) => [...new Set(sets.map((s) => s.exercise_name))]
   const totalVolume = (sets: WorkoutSet[]) =>
     sets.reduce((sum, s) => sum + (s.reps ?? 0) * (s.weight ?? 0), 0)
 
   return (
     <div className="space-y-6">
-      {/* Clock & title */}
+
+      {/* ── Clock & title ── */}
       <div className="text-center pt-2">
         <p className="text-zinc-500 text-xs font-medium uppercase tracking-widest">{dateLabel}</p>
         <p className="text-6xl font-bold tabular-nums tracking-tight mt-1 bg-gradient-to-b from-white to-zinc-400 bg-clip-text text-transparent">
@@ -87,7 +124,7 @@ export default function Dashboard() {
         </h1>
       </div>
 
-      {/* Arnold quote */}
+      {/* ── Arnold quote ── */}
       <div className="relative rounded-2xl bg-zinc-900 border border-zinc-800 px-5 pt-4 pb-5 overflow-hidden">
         <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-orange-500 to-orange-700 rounded-l-2xl" />
         <button
@@ -104,6 +141,7 @@ export default function Dashboard() {
         </p>
       </div>
 
+      {/* ── Start Workout ── */}
       <Link
         href="/log"
         className="flex items-center justify-center gap-3 w-full py-4 rounded-2xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors font-semibold text-white text-lg"
@@ -112,6 +150,94 @@ export default function Dashboard() {
         Start Workout
       </Link>
 
+      {/* ── Workout Calendar ── */}
+      <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4">
+
+        {/* Calendar header */}
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={prevMonth}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          >
+            <ChevronLeft size={18} />
+          </button>
+
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-sm text-white">{calLabel}</span>
+            {!isCurrentMonth && (
+              <button
+                onClick={goToday}
+                className="text-[11px] font-semibold text-orange-400 border border-orange-500/40 hover:border-orange-400 px-2 py-0.5 rounded-full transition-colors"
+              >
+                Today
+              </button>
+            )}
+          </div>
+
+          <button
+            onClick={nextMonth}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+
+        {/* Weekday headers */}
+        <div className="grid grid-cols-7 mb-2">
+          {WEEKDAYS.map((d) => (
+            <div key={d} className="text-center text-[11px] font-medium text-zinc-600">
+              {d[0]}
+            </div>
+          ))}
+        </div>
+
+        {/* Day grid */}
+        <div className="grid grid-cols-7">
+          {/* Offset empty cells */}
+          {Array.from({ length: firstDayOfWeek }).map((_, i) => (
+            <div key={`pad-${i}`} />
+          ))}
+
+          {/* Day cells */}
+          {Array.from({ length: daysInMonth }).map((_, i) => {
+            const day = i + 1
+            const dateStr = toDateStr(calYear, calMonthIdx, day)
+            const count = workoutCounts[dateStr] ?? 0
+            const isToday = dateStr === todayStr
+
+            return (
+              <div key={day} className="flex flex-col items-center py-1 gap-0.5">
+                {/* Day number */}
+                <div
+                  className={`w-7 h-7 flex items-center justify-center rounded-full text-xs font-medium transition-colors
+                    ${isToday
+                      ? 'bg-orange-500 text-white font-bold'
+                      : count > 0
+                        ? 'text-white'
+                        : 'text-zinc-500'
+                    }`}
+                >
+                  {day}
+                </div>
+
+                {/* Dumbbell + badge */}
+                {count > 0 && (
+                  <div className="relative flex items-center justify-center">
+                    <Dumbbell size={13} className="text-orange-400" />
+                    {count > 1 && (
+                      <span className="absolute -top-1.5 -right-2.5 bg-orange-500 text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center leading-none">
+                        {count}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── Recent Workouts ── */}
       <div>
         <h2 className="text-zinc-400 text-sm font-medium uppercase tracking-wider mb-3">
           Recent Workouts
@@ -137,11 +263,8 @@ export default function Dashboard() {
             const exercises = uniqueExercises(w.workout_sets ?? [])
             const volume = totalVolume(w.workout_sets ?? [])
             const workoutDate = new Date(w.date + 'T12:00:00').toLocaleDateString('en-US', {
-              weekday: 'short',
-              month: 'short',
-              day: 'numeric',
+              weekday: 'short', month: 'short', day: 'numeric',
             })
-
             const startTime = w.started_at ? new Date(w.started_at) : new Date(w.created_at)
             const timeStr = startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
             const durationLabel = w.duration_seconds && w.duration_seconds > 0
@@ -183,6 +306,7 @@ export default function Dashboard() {
           })}
         </div>
       </div>
+
     </div>
   )
 }
