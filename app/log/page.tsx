@@ -147,20 +147,34 @@ export default function LogWorkout() {
       return
     }
 
-    const rows = logged.flatMap((ex) =>
-      ex.sets.map((s, j) => ({
-        workout_id: workout.id,
-        exercise_id: ex.exercise_id,
-        exercise_name: ex.exercise_name,
-        routine_name: ex.routineName ?? null,
-        set_number: j + 1,
-        reps: s.reps ? parseInt(s.reps) : null,
-        weight: s.weight ? parseFloat(s.weight) : null,
-        weight_unit: s.weight_unit,
-      }))
+    const baseRow = (ex: LoggedExercise, s: LoggedSet, j: number) => ({
+      workout_id: workout.id,
+      exercise_id: ex.exercise_id,
+      exercise_name: ex.exercise_name,
+      set_number: j + 1,
+      reps: s.reps ? parseInt(s.reps) : null,
+      weight: s.weight ? parseFloat(s.weight) : null,
+      weight_unit: s.weight_unit,
+    })
+
+    const rowsWithRoutine = logged.flatMap((ex) =>
+      ex.sets.map((s, j) => ({ ...baseRow(ex, s, j), routine_name: ex.routineName ?? null }))
     )
 
-    await supabase.from('workout_sets').insert(rows)
+    let { error: setsError } = await supabase.from('workout_sets').insert(rowsWithRoutine)
+
+    // If routine_name column doesn't exist yet (migration not run), retry without it
+    if (setsError) {
+      const rowsWithout = logged.flatMap((ex) => ex.sets.map((s, j) => baseRow(ex, s, j)))
+      const { error: retryError } = await supabase.from('workout_sets').insert(rowsWithout)
+      if (retryError) {
+        await supabase.from('workouts').delete().eq('id', workout.id)
+        alert('Failed to save sets: ' + retryError.message)
+        setSaving(false)
+        return
+      }
+    }
+
     router.push('/')
   }
 
