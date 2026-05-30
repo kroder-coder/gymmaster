@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { Workout, WorkoutSet } from '@/lib/types'
 import {
   PlusCircle, ChevronRight, ChevronLeft, Flame,
-  Clock, Timer, RefreshCw, Dumbbell,
+  Clock, Timer, RefreshCw, Dumbbell, X,
 } from 'lucide-react'
 
 type WorkoutWithSets = Workout & { workout_sets: WorkoutSet[] }
@@ -37,6 +37,12 @@ function toDateStr(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
+function fmtDuration(secs: number) {
+  return secs < 3600
+    ? `${Math.round(secs / 60)} min`
+    : `${Math.floor(secs / 3600)}h ${Math.round((secs % 3600) / 60)}m`
+}
+
 export default function Dashboard() {
   const [recentWorkouts, setRecentWorkouts] = useState<WorkoutWithSets[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,8 +53,11 @@ export default function Dashboard() {
     const t = new Date()
     return new Date(t.getFullYear(), t.getMonth(), 1)
   })
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [selectedWorkouts, setSelectedWorkouts] = useState<WorkoutWithSets[]>([])
+  const [loadingSelected, setLoadingSelected] = useState(false)
 
-  // Load recent workouts (for the list)
+  // Load recent workouts for the list
   useEffect(() => {
     async function load() {
       const { data } = await supabase
@@ -63,14 +72,12 @@ export default function Dashboard() {
     load()
   }, [])
 
-  // Load all workout dates for the calendar
+  // Load all workout dates for the calendar dots
   useEffect(() => {
     async function loadDates() {
       const { data } = await supabase.from('workouts').select('date')
       const counts: Record<string, number> = {}
-      data?.forEach((w) => {
-        counts[w.date] = (counts[w.date] ?? 0) + 1
-      })
+      data?.forEach((w) => { counts[w.date] = (counts[w.date] ?? 0) + 1 })
       setWorkoutCounts(counts)
     }
     loadDates()
@@ -100,9 +107,33 @@ export default function Dashboard() {
   const isCurrentMonth =
     calYear === realToday.getFullYear() && calMonthIdx === realToday.getMonth()
 
-  function prevMonth() { setCalMonth(new Date(calYear, calMonthIdx - 1, 1)) }
-  function nextMonth() { setCalMonth(new Date(calYear, calMonthIdx + 1, 1)) }
-  function goToday()   { setCalMonth(new Date(realToday.getFullYear(), realToday.getMonth(), 1)) }
+  function prevMonth() {
+    setSelectedDate(null)
+    setCalMonth(new Date(calYear, calMonthIdx - 1, 1))
+  }
+  function nextMonth() {
+    setSelectedDate(null)
+    setCalMonth(new Date(calYear, calMonthIdx + 1, 1))
+  }
+  function goToday() {
+    setSelectedDate(null)
+    setCalMonth(new Date(realToday.getFullYear(), realToday.getMonth(), 1))
+  }
+
+  async function handleDayClick(dateStr: string) {
+    const count = workoutCounts[dateStr] ?? 0
+    if (count === 0) return
+    if (selectedDate === dateStr) { setSelectedDate(null); return }
+    setSelectedDate(dateStr)
+    setLoadingSelected(true)
+    const { data } = await supabase
+      .from('workouts')
+      .select('*, workout_sets(*)')
+      .eq('date', dateStr)
+      .order('created_at', { ascending: true })
+    setSelectedWorkouts((data as WorkoutWithSets[]) ?? [])
+    setLoadingSelected(false)
+  }
 
   // ── Recent workout helpers ───────────────────────────────────────────────
   const uniqueExercises = (sets: WorkoutSet[]) => [...new Set(sets.map((s) => s.exercise_name))]
@@ -153,7 +184,7 @@ export default function Dashboard() {
       {/* ── Workout Calendar ── */}
       <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-3">
 
-        {/* Calendar header */}
+        {/* Header */}
         <div className="flex items-center justify-between mb-2">
           <button
             onClick={prevMonth}
@@ -193,37 +224,41 @@ export default function Dashboard() {
 
         {/* Day grid */}
         <div className="grid grid-cols-7">
-          {/* Offset empty cells */}
           {Array.from({ length: firstDayOfWeek }).map((_, i) => (
             <div key={`pad-${i}`} />
           ))}
 
-          {/* Day cells */}
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const day = i + 1
             const dateStr = toDateStr(calYear, calMonthIdx, day)
             const count = workoutCounts[dateStr] ?? 0
             const isToday = dateStr === todayStr
+            const isSelected = dateStr === selectedDate
 
             return (
-              <div key={day} className="flex flex-col items-center py-0.5 gap-0">
-                {/* Day number */}
+              <div
+                key={day}
+                onClick={() => handleDayClick(dateStr)}
+                className={`flex flex-col items-center py-0.5 gap-0 ${count > 0 ? 'cursor-pointer' : ''}`}
+              >
                 <div
-                  className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium transition-colors
-                    ${isToday
-                      ? 'bg-orange-500 text-white font-bold'
-                      : count > 0
-                        ? 'text-white'
-                        : 'text-zinc-500'
+                  className={`w-8 h-8 flex items-center justify-center rounded-full font-medium transition-colors
+                    ${isSelected
+                      ? 'bg-orange-500/25 text-orange-300 ring-1 ring-orange-500'
+                      : isToday
+                        ? 'bg-orange-500 text-white font-bold'
+                        : count > 0
+                          ? 'text-white hover:bg-zinc-800'
+                          : 'text-zinc-500'
                     }`}
+                  style={{ fontSize: 18 }}
                 >
                   {day}
                 </div>
 
-                {/* Dumbbell + badge */}
                 {count > 0 && (
                   <div className="relative flex items-center justify-center">
-                    <Dumbbell size={13} className="text-orange-400" />
+                    <Dumbbell size={13} className={isSelected ? 'text-orange-300' : 'text-orange-400'} />
                     {count > 1 && (
                       <span className="absolute -top-1.5 -right-2.5 bg-orange-500 text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center leading-none">
                         {count}
@@ -236,6 +271,81 @@ export default function Dashboard() {
           })}
         </div>
       </div>
+
+      {/* ── Selected day detail ── */}
+      {selectedDate && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">
+              {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', {
+                weekday: 'long', month: 'long', day: 'numeric',
+              })}
+            </h2>
+            <button
+              onClick={() => setSelectedDate(null)}
+              className="p-1 rounded-full text-zinc-600 hover:text-zinc-300 transition-colors"
+            >
+              <X size={15} />
+            </button>
+          </div>
+
+          {loadingSelected && (
+            <div className="h-20 rounded-xl bg-zinc-800 animate-pulse" />
+          )}
+
+          {!loadingSelected && selectedWorkouts.map((w) => {
+            // Group sets → exercise name → set count
+            const exSets: Record<string, number> = {}
+            w.workout_sets?.forEach((s) => {
+              exSets[s.exercise_name] = (exSets[s.exercise_name] ?? 0) + 1
+            })
+            const exEntries = Object.entries(exSets)
+
+            const startTime = w.started_at ? new Date(w.started_at) : new Date(w.created_at)
+            const timeStr = startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+            const durationLabel = w.duration_seconds && w.duration_seconds > 0
+              ? fmtDuration(w.duration_seconds) : null
+
+            return (
+              <Link
+                key={w.id}
+                href={`/history?id=${w.id}`}
+                className="block p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-colors"
+              >
+                {/* Workout meta */}
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="flex items-center gap-1 text-zinc-500 text-xs">
+                    <Clock size={11} /> {timeStr}
+                  </span>
+                  {durationLabel && (
+                    <span className="flex items-center gap-1 text-orange-400 text-xs">
+                      <Timer size={11} /> {durationLabel}
+                    </span>
+                  )}
+                </div>
+
+                {/* Exercise list */}
+                {exEntries.length === 0 ? (
+                  <p className="text-zinc-500 text-sm">No exercises logged</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {exEntries.map(([name, sets]) => (
+                      <div key={name} className="flex items-center justify-between">
+                        <span className="text-sm text-zinc-200">{name}</span>
+                        <span className="text-xs text-zinc-500 tabular-nums">
+                          {sets} {sets === 1 ? 'set' : 'sets'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <p className="text-xs text-orange-400/70 mt-3">Tap to view full workout →</p>
+              </Link>
+            )
+          })}
+        </div>
+      )}
 
       {/* ── Recent Workouts ── */}
       <div>
@@ -268,10 +378,7 @@ export default function Dashboard() {
             const startTime = w.started_at ? new Date(w.started_at) : new Date(w.created_at)
             const timeStr = startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
             const durationLabel = w.duration_seconds && w.duration_seconds > 0
-              ? (w.duration_seconds < 3600
-                  ? `${Math.round(w.duration_seconds / 60)} min`
-                  : `${Math.floor(w.duration_seconds / 3600)}h ${Math.round((w.duration_seconds % 3600) / 60)}m`)
-              : null
+              ? fmtDuration(w.duration_seconds) : null
 
             return (
               <Link
