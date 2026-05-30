@@ -11,6 +11,8 @@ export interface Workout {
   id: string
   date: string
   notes: string | null
+  started_at: string | null
+  duration_seconds: number | null
   created_at: string
   workout_sets?: WorkoutSet[]
 }

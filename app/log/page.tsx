@@ -2,11 +2,14 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Exercise, LoggedExercise, LoggedSet, Routine, RoutineExercise } from '@/lib/types'
-import { Plus, Trash2, Check, X, Search, ChevronDown, ChevronUp, BookOpen } from 'lucide-react'
+import {
+  Plus, Trash2, Check, X, Search, ChevronDown, ChevronUp,
+  BookOpen, Play, Pause, RotateCcw, Timer, Zap,
+} from 'lucide-react'
 
 const CATEGORIES = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Other']
 
@@ -18,6 +21,14 @@ type Segment =
 
 function emptySet(): LoggedSet {
   return { reps: '', weight: '', weight_unit: 'kg' }
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+function formatTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
 }
 
 export default function LogWorkout() {
@@ -34,6 +45,15 @@ export default function LogWorkout() {
   const [activeCategory, setActiveCategory] = useState('All')
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
 
+  // Workout timer
+  const [workoutStartTime, setWorkoutStartTime] = useState<Date | null>(null)
+  const [workoutElapsed, setWorkoutElapsed] = useState(0)
+
+  // Rest timer
+  const [restSeconds, setRestSeconds] = useState(0)
+  const [restRunning, setRestRunning] = useState(false)
+  const restIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
     Promise.all([
       supabase.from('exercises').select('*').order('name'),
@@ -44,14 +64,50 @@ export default function LogWorkout() {
     })
   }, [])
 
-  // Group logged exercises into segments: routine groups and solo exercises
+  // Workout elapsed ticker
+  useEffect(() => {
+    if (!workoutStartTime) return
+    const interval = setInterval(() => {
+      setWorkoutElapsed(Math.floor((Date.now() - workoutStartTime.getTime()) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [workoutStartTime])
+
+  // Cleanup rest timer on unmount
+  useEffect(() => {
+    return () => { if (restIntervalRef.current) clearInterval(restIntervalRef.current) }
+  }, [])
+
+  function startWorkout() {
+    setWorkoutStartTime(new Date())
+  }
+
+  function startRest() {
+    restIntervalRef.current = setInterval(() => setRestSeconds((s) => s + 1), 1000)
+    setRestRunning(true)
+  }
+
+  function pauseRest() {
+    if (restIntervalRef.current) clearInterval(restIntervalRef.current)
+    restIntervalRef.current = null
+    setRestRunning(false)
+  }
+
+  function toggleRest() { restRunning ? pauseRest() : startRest() }
+
+  function resetRest() {
+    pauseRest()
+    setRestSeconds(0)
+  }
+
+  // Segment computation
   const segments = useMemo<Segment[]>(() => {
     const result: Segment[] = []
     const seen = new Map<string, { type: 'routine'; name: string; items: { ex: LoggedExercise; idx: number }[] }>()
     logged.forEach((ex, idx) => {
       if (ex.routineName) {
         if (!seen.has(ex.routineName)) {
-          const seg: Segment & { type: 'routine' } = { type: 'routine', name: ex.routineName, items: [{ ex, idx }] }
+          const seg = { type: 'routine' as const, name: ex.routineName, items: [{ ex, idx }] }
           seen.set(ex.routineName, seg)
           result.push(seg)
         } else {
@@ -103,30 +159,22 @@ export default function LogWorkout() {
     })
   }
 
-  function removeExercise(i: number) {
-    setLogged((prev) => prev.filter((_, idx) => idx !== i))
-  }
+  function removeExercise(i: number) { setLogged((prev) => prev.filter((_, idx) => idx !== i)) }
 
   function addSet(exIdx: number) {
-    setLogged((prev) =>
-      prev.map((ex, i) => (i === exIdx ? { ...ex, sets: [...ex.sets, emptySet()] } : ex))
-    )
+    setLogged((prev) => prev.map((ex, i) => (i === exIdx ? { ...ex, sets: [...ex.sets, emptySet()] } : ex)))
   }
 
   function removeSet(exIdx: number, setIdx: number) {
     setLogged((prev) =>
-      prev.map((ex, i) =>
-        i === exIdx ? { ...ex, sets: ex.sets.filter((_, j) => j !== setIdx) } : ex
-      )
+      prev.map((ex, i) => i === exIdx ? { ...ex, sets: ex.sets.filter((_, j) => j !== setIdx) } : ex)
     )
   }
 
   function updateSet(exIdx: number, setIdx: number, field: keyof LoggedSet, value: string) {
     setLogged((prev) =>
       prev.map((ex, i) =>
-        i === exIdx
-          ? { ...ex, sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, [field]: value } : s)) }
-          : ex
+        i === exIdx ? { ...ex, sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, [field]: value } : s)) } : ex
       )
     )
   }
@@ -134,21 +182,32 @@ export default function LogWorkout() {
   async function save() {
     if (logged.length === 0) return
     setSaving(true)
+    pauseRest()
 
-    const { data: workout, error } = await supabase
-      .from('workouts')
-      .insert({ date: new Date().toISOString().split('T')[0], notes: notes || null })
-      .select()
-      .single()
+    const today = new Date().toISOString().split('T')[0]
 
-    if (error || !workout) {
-      alert('Failed to save workout. Check your Supabase connection.')
-      setSaving(false)
-      return
+    // Try inserting with timing fields; fall back without them if migration not run
+    let workout: { id: string } | null = null
+    {
+      const { data, error } = await supabase
+        .from('workouts')
+        .insert({ date: today, notes: notes || null, started_at: workoutStartTime?.toISOString() ?? null, duration_seconds: workoutElapsed > 0 ? workoutElapsed : null })
+        .select()
+        .single()
+      if (!error) workout = data
+    }
+    if (!workout) {
+      const { data, error } = await supabase
+        .from('workouts')
+        .insert({ date: today, notes: notes || null })
+        .select()
+        .single()
+      if (error || !data) { alert('Failed to save workout: ' + error?.message); setSaving(false); return }
+      workout = data
     }
 
     const baseRow = (ex: LoggedExercise, s: LoggedSet, j: number) => ({
-      workout_id: workout.id,
+      workout_id: workout!.id,
       exercise_id: ex.exercise_id,
       exercise_name: ex.exercise_name,
       set_number: j + 1,
@@ -162,13 +221,11 @@ export default function LogWorkout() {
     )
 
     let { error: setsError } = await supabase.from('workout_sets').insert(rowsWithRoutine)
-
-    // If routine_name column doesn't exist yet (migration not run), retry without it
     if (setsError) {
       const rowsWithout = logged.flatMap((ex) => ex.sets.map((s, j) => baseRow(ex, s, j)))
       const { error: retryError } = await supabase.from('workout_sets').insert(rowsWithout)
       if (retryError) {
-        await supabase.from('workouts').delete().eq('id', workout.id)
+        await supabase.from('workouts').delete().eq('id', workout!.id)
         alert('Failed to save sets: ' + retryError.message)
         setSaving(false)
         return
@@ -184,27 +241,18 @@ export default function LogWorkout() {
     return (
       <div
         key={exIdx}
-        className={`rounded-xl border overflow-hidden ${
-          insideRoutine ? 'bg-zinc-900/80 border-zinc-700/60' : 'bg-zinc-900 border-zinc-800'
-        }`}
+        className={`rounded-xl border overflow-hidden ${insideRoutine ? 'bg-zinc-900/80 border-zinc-700/60' : 'bg-zinc-900 border-zinc-800'}`}
       >
-        <div
-          className="flex items-center justify-between px-4 py-3 cursor-pointer"
-          onClick={() => toggle(exIdx)}
-        >
+        <div className="flex items-center justify-between px-4 py-3 cursor-pointer" onClick={() => toggle(exIdx)}>
           <span className="font-semibold">{ex.exercise_name}</span>
           <div className="flex items-center gap-2">
             <span className="text-zinc-500 text-sm">{ex.sets.length} set{ex.sets.length !== 1 ? 's' : ''}</span>
             {collapsed[exIdx] ? <ChevronDown size={16} className="text-zinc-500" /> : <ChevronUp size={16} className="text-zinc-500" />}
-            <button
-              onClick={(e) => { e.stopPropagation(); removeExercise(exIdx) }}
-              className="text-zinc-600 hover:text-red-400 transition-colors ml-1"
-            >
+            <button onClick={(e) => { e.stopPropagation(); removeExercise(exIdx) }} className="text-zinc-600 hover:text-red-400 transition-colors ml-1">
               <Trash2 size={16} />
             </button>
           </div>
         </div>
-
         {!collapsed[exIdx] && (
           <div className="px-4 pb-4 space-y-2">
             <div className="grid grid-cols-12 gap-2 text-xs text-zinc-500 font-medium px-1">
@@ -217,19 +265,13 @@ export default function LogWorkout() {
               <div key={setIdx} className="grid grid-cols-12 gap-2 items-center">
                 <span className="col-span-1 text-zinc-600 text-sm">{setIdx + 1}</span>
                 <input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="0"
-                  value={s.reps}
+                  type="number" inputMode="numeric" placeholder="0" value={s.reps}
                   onChange={(e) => updateSet(exIdx, setIdx, 'reps', e.target.value)}
                   className="col-span-4 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
                 />
                 <div className="col-span-5 flex gap-1">
                   <input
-                    type="number"
-                    inputMode="decimal"
-                    placeholder="0"
-                    value={s.weight}
+                    type="number" inputMode="decimal" placeholder="0" value={s.weight}
                     onChange={(e) => updateSet(exIdx, setIdx, 'weight', e.target.value)}
                     className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
                   />
@@ -240,18 +282,12 @@ export default function LogWorkout() {
                     {s.weight_unit}
                   </button>
                 </div>
-                <button
-                  onClick={() => removeSet(exIdx, setIdx)}
-                  className="col-span-2 flex justify-center text-zinc-700 hover:text-red-400 transition-colors"
-                >
+                <button onClick={() => removeSet(exIdx, setIdx)} className="col-span-2 flex justify-center text-zinc-700 hover:text-red-400 transition-colors">
                   <X size={15} />
                 </button>
               </div>
             ))}
-            <button
-              onClick={() => addSet(exIdx)}
-              className="flex items-center gap-1.5 text-sm text-orange-400 hover:text-orange-300 transition-colors mt-1"
-            >
+            <button onClick={() => addSet(exIdx)} className="flex items-center gap-1.5 text-sm text-orange-400 hover:text-orange-300 transition-colors mt-1">
               <Plus size={15} /> Add Set
             </button>
           </div>
@@ -261,7 +297,7 @@ export default function LogWorkout() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Log Workout</h1>
         <span className="text-zinc-500 text-sm">
@@ -269,6 +305,61 @@ export default function LogWorkout() {
         </span>
       </div>
 
+      {/* Timers */}
+      {!workoutStartTime ? (
+        <button
+          onClick={startWorkout}
+          className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors text-sm font-medium"
+        >
+          <Zap size={16} className="text-orange-400" />
+          Start Workout Timer
+        </button>
+      ) : (
+        <div className="space-y-2">
+          {/* Workout duration */}
+          <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900 rounded-xl border border-zinc-800">
+            <Timer size={16} className="text-orange-400 shrink-0" />
+            <span className="text-sm text-zinc-400">Workout</span>
+            <span className="font-mono font-bold text-orange-400 text-lg ml-auto tracking-wide">
+              {formatTime(workoutElapsed)}
+            </span>
+          </div>
+
+          {/* Rest timer */}
+          <div
+            onClick={toggleRest}
+            className={`relative flex items-center gap-4 px-4 py-3 rounded-xl border cursor-pointer transition-colors select-none ${
+              restRunning
+                ? 'bg-orange-500/10 border-orange-500/40 hover:bg-orange-500/15'
+                : 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800'
+            }`}
+          >
+            <div className="flex-1">
+              <p className="text-xs text-zinc-500 mb-0.5">
+                Rest Timer {restSeconds > 0 && !restRunning ? '(paused)' : ''}
+              </p>
+              <span className={`font-mono text-2xl font-bold tracking-wide ${restRunning ? 'text-orange-400' : 'text-zinc-300'}`}>
+                {formatTime(restSeconds)}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              {restRunning
+                ? <Pause size={22} className="text-orange-400" />
+                : <Play size={22} className="text-zinc-400" />
+              }
+              <button
+                onClick={(e) => { e.stopPropagation(); resetRest() }}
+                className="text-zinc-600 hover:text-zinc-300 transition-colors p-1"
+                title="Reset rest timer"
+              >
+                <RotateCcw size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Load from routine */}
       {routines.length > 0 && (
         <button
           onClick={() => { setShowRoutinePicker(true); setSelectedRoutines(new Set()) }}
@@ -286,15 +377,13 @@ export default function LogWorkout() {
         </div>
       )}
 
+      {/* Exercise segments */}
       <div className="space-y-3">
         {segments.map((seg, segIdx) =>
           seg.type === 'solo' ? (
             renderExerciseCard(seg.ex, seg.idx)
           ) : (
-            <div
-              key={seg.name + segIdx}
-              className="rounded-2xl border border-orange-500/25 bg-orange-500/5 p-3 space-y-2"
-            >
+            <div key={seg.name + segIdx} className="rounded-2xl border border-orange-500/25 bg-orange-500/5 p-3 space-y-2">
               <div className="flex items-center gap-2 px-1 pb-1">
                 <BookOpen size={14} className="text-orange-400 shrink-0" />
                 <span className="text-sm font-semibold text-orange-400">{seg.name}</span>
@@ -338,9 +427,7 @@ export default function LogWorkout() {
           <div className="bg-zinc-900 w-full max-w-lg mx-auto rounded-t-3xl max-h-[70vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
               <h2 className="font-semibold text-lg">Load Routines</h2>
-              <button onClick={() => setShowRoutinePicker(false)} className="text-zinc-400 hover:text-white">
-                <X size={22} />
-              </button>
+              <button onClick={() => setShowRoutinePicker(false)} className="text-zinc-400 hover:text-white"><X size={22} /></button>
             </div>
             <p className="text-zinc-500 text-sm px-5 pt-3">Select one or more routines to load.</p>
             <div className="overflow-y-auto flex-1 px-5 py-3 space-y-2">
@@ -348,12 +435,8 @@ export default function LogWorkout() {
                 const selected = selectedRoutines.has(r.id)
                 const sorted = [...r.routine_exercises].sort((a, b) => a.sort_order - b.sort_order)
                 return (
-                  <button
-                    key={r.id}
-                    onClick={() => toggleRoutineSelection(r.id)}
-                    className={`w-full text-left px-4 py-3.5 rounded-xl border transition-colors ${
-                      selected ? 'border-orange-500 bg-orange-500/10' : 'border-zinc-800 bg-zinc-800/50 hover:border-zinc-600'
-                    }`}
+                  <button key={r.id} onClick={() => toggleRoutineSelection(r.id)}
+                    className={`w-full text-left px-4 py-3.5 rounded-xl border transition-colors ${selected ? 'border-orange-500 bg-orange-500/10' : 'border-zinc-800 bg-zinc-800/50 hover:border-zinc-600'}`}
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium">{r.name}</span>
@@ -361,17 +444,13 @@ export default function LogWorkout() {
                         {selected && <Check size={12} className="text-white" />}
                       </div>
                     </div>
-                    {sorted.length > 0 && (
-                      <p className="text-zinc-500 text-xs mt-1">{sorted.map((re) => re.exercise_name).join(', ')}</p>
-                    )}
+                    {sorted.length > 0 && <p className="text-zinc-500 text-xs mt-1">{sorted.map((re) => re.exercise_name).join(', ')}</p>}
                   </button>
                 )
               })}
             </div>
             <div className="px-5 py-4 border-t border-zinc-800">
-              <button
-                onClick={loadRoutines}
-                disabled={selectedRoutines.size === 0}
+              <button onClick={loadRoutines} disabled={selectedRoutines.size === 0}
                 className="w-full py-3 rounded-xl bg-orange-500 hover:bg-orange-400 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-semibold transition-colors"
               >
                 Load {selectedRoutines.size > 0 ? `${selectedRoutines.size} Routine${selectedRoutines.size > 1 ? 's' : ''}` : 'Routine'}
@@ -387,30 +466,20 @@ export default function LogWorkout() {
           <div className="bg-zinc-900 w-full max-w-lg mx-auto rounded-t-3xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
               <h2 className="font-semibold text-lg">Add Exercise</h2>
-              <button onClick={() => setShowPicker(false)} className="text-zinc-400 hover:text-white">
-                <X size={22} />
-              </button>
+              <button onClick={() => setShowPicker(false)} className="text-zinc-400 hover:text-white"><X size={22} /></button>
             </div>
             <div className="px-5 py-3 border-b border-zinc-800">
               <div className="relative">
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-                <input
-                  autoFocus
-                  type="text"
-                  placeholder="Search exercises..."
-                  value={search}
+                <input autoFocus type="text" placeholder="Search exercises..." value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full bg-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
                 />
               </div>
               <div className="flex gap-2 mt-3 overflow-x-auto pb-1">
                 {['All', ...CATEGORIES].map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setActiveCategory(cat)}
-                    className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                      activeCategory === cat ? 'bg-orange-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                    }`}
+                  <button key={cat} onClick={() => setActiveCategory(cat)}
+                    className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors ${activeCategory === cat ? 'bg-orange-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
                   >
                     {cat}
                   </button>
@@ -420,9 +489,7 @@ export default function LogWorkout() {
             <div className="overflow-y-auto flex-1">
               {filtered.length === 0 && <p className="text-center text-zinc-500 py-8 text-sm">No exercises found.</p>}
               {filtered.map((ex) => (
-                <button
-                  key={ex.id}
-                  onClick={() => addExercise(ex)}
+                <button key={ex.id} onClick={() => addExercise(ex)}
                   className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-zinc-800 transition-colors border-b border-zinc-800/50 text-left"
                 >
                   <span>{ex.name}</span>

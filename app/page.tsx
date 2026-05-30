@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Workout, WorkoutSet } from '@/lib/types'
-import { PlusCircle, ChevronRight, Flame } from 'lucide-react'
+import { PlusCircle, ChevronRight, Flame, Clock, Timer } from 'lucide-react'
 
 type WorkoutWithSets = Workout & { workout_sets: WorkoutSet[] }
 
@@ -88,6 +88,14 @@ export default function Dashboard() {
               day: 'numeric',
             })
 
+            const startTime = w.started_at ? new Date(w.started_at) : new Date(w.created_at)
+            const timeLabel = startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+            const durationLabel = w.duration_seconds && w.duration_seconds > 0
+              ? (w.duration_seconds < 3600
+                  ? `${Math.round(w.duration_seconds / 60)} min`
+                  : `${Math.floor(w.duration_seconds / 3600)}h ${Math.round((w.duration_seconds % 3600) / 60)}m`)
+              : null
+
             return (
               <Link
                 key={w.id}
@@ -95,7 +103,17 @@ export default function Dashboard() {
                 className="flex items-center justify-between p-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 transition-colors border border-zinc-800"
               >
                 <div>
-                  <p className="font-medium">{dateLabel}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-medium">{dateLabel}</p>
+                    <span className="flex items-center gap-1 text-zinc-500 text-xs">
+                      <Clock size={10} /> {timeLabel}
+                    </span>
+                    {durationLabel && (
+                      <span className="flex items-center gap-1 text-orange-400 text-xs">
+                        <Timer size={10} /> {durationLabel}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-zinc-400 text-sm mt-0.5">
                     {exercises.length > 0
                       ? exercises.slice(0, 3).join(', ') + (exercises.length > 3 ? ` +${exercises.length - 3}` : '')
