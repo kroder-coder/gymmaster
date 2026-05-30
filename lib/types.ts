@@ -20,6 +20,7 @@ export interface WorkoutSet {
   workout_id: string
   exercise_id: string
   exercise_name: string
+  routine_name: string | null
   set_number: number
   reps: number | null
   weight: number | null

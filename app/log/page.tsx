@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Exercise, LoggedExercise, LoggedSet, Routine, RoutineExercise } from '@/lib/types'
@@ -11,6 +11,10 @@ import { Plus, Trash2, Check, X, Search, ChevronDown, ChevronUp, BookOpen } from
 const CATEGORIES = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Other']
 
 type RoutineWithExercises = Routine & { routine_exercises: RoutineExercise[] }
+
+type Segment =
+  | { type: 'routine'; name: string; items: { ex: LoggedExercise; idx: number }[] }
+  | { type: 'solo'; ex: LoggedExercise; idx: number }
 
 function emptySet(): LoggedSet {
   return { reps: '', weight: '', weight_unit: 'kg' }
@@ -33,15 +37,32 @@ export default function LogWorkout() {
   useEffect(() => {
     Promise.all([
       supabase.from('exercises').select('*').order('name'),
-      supabase
-        .from('routines')
-        .select('*, routine_exercises(*)')
-        .order('name'),
+      supabase.from('routines').select('*, routine_exercises(*)').order('name'),
     ]).then(([{ data: ex }, { data: r }]) => {
       setExercises(ex ?? [])
       setRoutines((r as RoutineWithExercises[]) ?? [])
     })
   }, [])
+
+  // Group logged exercises into segments: routine groups and solo exercises
+  const segments = useMemo<Segment[]>(() => {
+    const result: Segment[] = []
+    const seen = new Map<string, { type: 'routine'; name: string; items: { ex: LoggedExercise; idx: number }[] }>()
+    logged.forEach((ex, idx) => {
+      if (ex.routineName) {
+        if (!seen.has(ex.routineName)) {
+          const seg: Segment & { type: 'routine' } = { type: 'routine', name: ex.routineName, items: [{ ex, idx }] }
+          seen.set(ex.routineName, seg)
+          result.push(seg)
+        } else {
+          seen.get(ex.routineName)!.items.push({ ex, idx })
+        }
+      } else {
+        result.push({ type: 'solo', ex, idx })
+      }
+    })
+    return result
+  }, [logged])
 
   const filtered = exercises.filter((e) => {
     const matchesSearch = e.name.toLowerCase().includes(search.toLowerCase())
@@ -58,7 +79,6 @@ export default function LogWorkout() {
   function loadRoutines() {
     const toAdd: LoggedExercise[] = []
     const existingIds = new Set(logged.map((l) => l.exercise_id))
-
     selectedRoutines.forEach((routineId) => {
       const routine = routines.find((r) => r.id === routineId)
       if (!routine) return
@@ -70,7 +90,6 @@ export default function LogWorkout() {
         }
       })
     })
-
     setLogged((prev) => [...prev, ...toAdd])
     setSelectedRoutines(new Set())
     setShowRoutinePicker(false)
@@ -133,6 +152,7 @@ export default function LogWorkout() {
         workout_id: workout.id,
         exercise_id: ex.exercise_id,
         exercise_name: ex.exercise_name,
+        routine_name: ex.routineName ?? null,
         set_number: j + 1,
         reps: s.reps ? parseInt(s.reps) : null,
         weight: s.weight ? parseFloat(s.weight) : null,
@@ -146,6 +166,86 @@ export default function LogWorkout() {
 
   const toggle = (i: number) => setCollapsed((prev) => ({ ...prev, [i]: !prev[i] }))
 
+  function renderExerciseCard(ex: LoggedExercise, exIdx: number, insideRoutine = false) {
+    return (
+      <div
+        key={exIdx}
+        className={`rounded-xl border overflow-hidden ${
+          insideRoutine ? 'bg-zinc-900/80 border-zinc-700/60' : 'bg-zinc-900 border-zinc-800'
+        }`}
+      >
+        <div
+          className="flex items-center justify-between px-4 py-3 cursor-pointer"
+          onClick={() => toggle(exIdx)}
+        >
+          <span className="font-semibold">{ex.exercise_name}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-500 text-sm">{ex.sets.length} set{ex.sets.length !== 1 ? 's' : ''}</span>
+            {collapsed[exIdx] ? <ChevronDown size={16} className="text-zinc-500" /> : <ChevronUp size={16} className="text-zinc-500" />}
+            <button
+              onClick={(e) => { e.stopPropagation(); removeExercise(exIdx) }}
+              className="text-zinc-600 hover:text-red-400 transition-colors ml-1"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+
+        {!collapsed[exIdx] && (
+          <div className="px-4 pb-4 space-y-2">
+            <div className="grid grid-cols-12 gap-2 text-xs text-zinc-500 font-medium px-1">
+              <span className="col-span-1">#</span>
+              <span className="col-span-4">Reps</span>
+              <span className="col-span-5">Weight</span>
+              <span className="col-span-2"></span>
+            </div>
+            {ex.sets.map((s, setIdx) => (
+              <div key={setIdx} className="grid grid-cols-12 gap-2 items-center">
+                <span className="col-span-1 text-zinc-600 text-sm">{setIdx + 1}</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={s.reps}
+                  onChange={(e) => updateSet(exIdx, setIdx, 'reps', e.target.value)}
+                  className="col-span-4 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
+                />
+                <div className="col-span-5 flex gap-1">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={s.weight}
+                    onChange={(e) => updateSet(exIdx, setIdx, 'weight', e.target.value)}
+                    className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
+                  />
+                  <button
+                    onClick={() => updateSet(exIdx, setIdx, 'weight_unit', s.weight_unit === 'kg' ? 'lbs' : 'kg')}
+                    className="text-xs bg-zinc-700 hover:bg-zinc-600 rounded-lg px-2 py-2 text-zinc-300 transition-colors whitespace-nowrap"
+                  >
+                    {s.weight_unit}
+                  </button>
+                </div>
+                <button
+                  onClick={() => removeSet(exIdx, setIdx)}
+                  className="col-span-2 flex justify-center text-zinc-700 hover:text-red-400 transition-colors"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => addSet(exIdx)}
+              className="flex items-center gap-1.5 text-sm text-orange-400 hover:text-orange-300 transition-colors mt-1"
+            >
+              <Plus size={15} /> Add Set
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -155,7 +255,6 @@ export default function LogWorkout() {
         </span>
       </div>
 
-      {/* Load from routines button */}
       {routines.length > 0 && (
         <button
           onClick={() => { setShowRoutinePicker(true); setSelectedRoutines(new Set()) }}
@@ -173,86 +272,26 @@ export default function LogWorkout() {
         </div>
       )}
 
-      <div className="space-y-4">
-        {logged.map((ex, exIdx) => (
-          <div key={exIdx} className="bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden">
+      <div className="space-y-3">
+        {segments.map((seg, segIdx) =>
+          seg.type === 'solo' ? (
+            renderExerciseCard(seg.ex, seg.idx)
+          ) : (
             <div
-              className="flex items-center justify-between px-4 py-3 cursor-pointer"
-              onClick={() => toggle(exIdx)}
+              key={seg.name + segIdx}
+              className="rounded-2xl border border-orange-500/25 bg-orange-500/5 p-3 space-y-2"
             >
-              <div className="flex flex-col gap-0.5">
-                <span className="font-semibold">{ex.exercise_name}</span>
-                {ex.routineName && (
-                  <span className="text-xs text-orange-400/80 font-medium">{ex.routineName}</span>
-                )}
+              <div className="flex items-center gap-2 px-1 pb-1">
+                <BookOpen size={14} className="text-orange-400 shrink-0" />
+                <span className="text-sm font-semibold text-orange-400">{seg.name}</span>
+                <span className="text-xs text-zinc-600 ml-auto">{seg.items.length} exercise{seg.items.length !== 1 ? 's' : ''}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-zinc-500 text-sm">{ex.sets.length} set{ex.sets.length !== 1 ? 's' : ''}</span>
-                {collapsed[exIdx] ? <ChevronDown size={16} className="text-zinc-500" /> : <ChevronUp size={16} className="text-zinc-500" />}
-                <button
-                  onClick={(e) => { e.stopPropagation(); removeExercise(exIdx) }}
-                  className="text-zinc-600 hover:text-red-400 transition-colors ml-1"
-                >
-                  <Trash2 size={16} />
-                </button>
+              <div className="space-y-2">
+                {seg.items.map(({ ex, idx }) => renderExerciseCard(ex, idx, true))}
               </div>
             </div>
-
-            {!collapsed[exIdx] && (
-              <div className="px-4 pb-4 space-y-2">
-                <div className="grid grid-cols-12 gap-2 text-xs text-zinc-500 font-medium px-1">
-                  <span className="col-span-1">#</span>
-                  <span className="col-span-4">Reps</span>
-                  <span className="col-span-5">Weight</span>
-                  <span className="col-span-2"></span>
-                </div>
-
-                {ex.sets.map((s, setIdx) => (
-                  <div key={setIdx} className="grid grid-cols-12 gap-2 items-center">
-                    <span className="col-span-1 text-zinc-600 text-sm">{setIdx + 1}</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      placeholder="0"
-                      value={s.reps}
-                      onChange={(e) => updateSet(exIdx, setIdx, 'reps', e.target.value)}
-                      className="col-span-4 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
-                    />
-                    <div className="col-span-5 flex gap-1">
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        placeholder="0"
-                        value={s.weight}
-                        onChange={(e) => updateSet(exIdx, setIdx, 'weight', e.target.value)}
-                        className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-1 focus:ring-orange-500"
-                      />
-                      <button
-                        onClick={() => updateSet(exIdx, setIdx, 'weight_unit', s.weight_unit === 'kg' ? 'lbs' : 'kg')}
-                        className="text-xs bg-zinc-700 hover:bg-zinc-600 rounded-lg px-2 py-2 text-zinc-300 transition-colors whitespace-nowrap"
-                      >
-                        {s.weight_unit}
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => removeSet(exIdx, setIdx)}
-                      className="col-span-2 flex justify-center text-zinc-700 hover:text-red-400 transition-colors"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                ))}
-
-                <button
-                  onClick={() => addSet(exIdx)}
-                  className="flex items-center gap-1.5 text-sm text-orange-400 hover:text-orange-300 transition-colors mt-1"
-                >
-                  <Plus size={15} /> Add Set
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
+          )
+        )}
       </div>
 
       <button
@@ -289,9 +328,7 @@ export default function LogWorkout() {
                 <X size={22} />
               </button>
             </div>
-
             <p className="text-zinc-500 text-sm px-5 pt-3">Select one or more routines to load.</p>
-
             <div className="overflow-y-auto flex-1 px-5 py-3 space-y-2">
               {routines.map((r) => {
                 const selected = selectedRoutines.has(r.id)
@@ -301,29 +338,22 @@ export default function LogWorkout() {
                     key={r.id}
                     onClick={() => toggleRoutineSelection(r.id)}
                     className={`w-full text-left px-4 py-3.5 rounded-xl border transition-colors ${
-                      selected
-                        ? 'border-orange-500 bg-orange-500/10 text-white'
-                        : 'border-zinc-800 bg-zinc-800/50 hover:border-zinc-600'
+                      selected ? 'border-orange-500 bg-orange-500/10' : 'border-zinc-800 bg-zinc-800/50 hover:border-zinc-600'
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium">{r.name}</span>
-                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                        selected ? 'border-orange-500 bg-orange-500' : 'border-zinc-600'
-                      }`}>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${selected ? 'border-orange-500 bg-orange-500' : 'border-zinc-600'}`}>
                         {selected && <Check size={12} className="text-white" />}
                       </div>
                     </div>
                     {sorted.length > 0 && (
-                      <p className="text-zinc-500 text-xs mt-1">
-                        {sorted.map((re) => re.exercise_name).join(', ')}
-                      </p>
+                      <p className="text-zinc-500 text-xs mt-1">{sorted.map((re) => re.exercise_name).join(', ')}</p>
                     )}
                   </button>
                 )
               })}
             </div>
-
             <div className="px-5 py-4 border-t border-zinc-800">
               <button
                 onClick={loadRoutines}
@@ -347,7 +377,6 @@ export default function LogWorkout() {
                 <X size={22} />
               </button>
             </div>
-
             <div className="px-5 py-3 border-b border-zinc-800">
               <div className="relative">
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
@@ -366,9 +395,7 @@ export default function LogWorkout() {
                     key={cat}
                     onClick={() => setActiveCategory(cat)}
                     className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                      activeCategory === cat
-                        ? 'bg-orange-500 text-white'
-                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                      activeCategory === cat ? 'bg-orange-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
                     }`}
                   >
                     {cat}
@@ -376,11 +403,8 @@ export default function LogWorkout() {
                 ))}
               </div>
             </div>
-
             <div className="overflow-y-auto flex-1">
-              {filtered.length === 0 && (
-                <p className="text-center text-zinc-500 py-8 text-sm">No exercises found.</p>
-              )}
+              {filtered.length === 0 && <p className="text-center text-zinc-500 py-8 text-sm">No exercises found.</p>}
               {filtered.map((ex) => (
                 <button
                   key={ex.id}
