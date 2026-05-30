@@ -276,7 +276,7 @@ export default function LogWorkout() {
 
       {/* Routine picker modal */}
       {showRoutinePicker && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-end">
+        <div className="fixed inset-x-0 top-0 bottom-16 bg-black/70 z-50 flex items-end">
           <div className="bg-zinc-900 w-full max-w-lg mx-auto rounded-t-3xl max-h-[70vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
               <h2 className="font-semibold text-lg">Load Routines</h2>
@@ -334,7 +334,7 @@ export default function LogWorkout() {
 
       {/* Exercise picker modal */}
       {showPicker && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-end">
+        <div className="fixed inset-x-0 top-0 bottom-16 bg-black/70 z-50 flex items-end">
           <div className="bg-zinc-900 w-full max-w-lg mx-auto rounded-t-3xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
               <h2 className="font-semibold text-lg">Add Exercise</h2>
