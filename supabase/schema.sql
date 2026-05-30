@@ -28,6 +28,27 @@ create table workout_sets (
   created_at timestamptz default now()
 );
 
+create table routines (
+  id uuid default gen_random_uuid() primary key,
+  name text not null,
+  created_at timestamptz default now()
+);
+
+create table routine_exercises (
+  id uuid default gen_random_uuid() primary key,
+  routine_id uuid references routines(id) on delete cascade not null,
+  exercise_id uuid references exercises(id) not null,
+  exercise_name text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz default now()
+);
+
+-- RLS for new tables
+alter table routines enable row level security;
+alter table routine_exercises enable row level security;
+create policy "allow all" on routines for all using (true) with check (true);
+create policy "allow all" on routine_exercises for all using (true) with check (true);
+
 -- Seed exercise library
 insert into exercises (name, category) values
   ('Bench Press', 'Chest'),

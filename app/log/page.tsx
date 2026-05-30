@@ -5,10 +5,12 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Exercise, LoggedExercise, LoggedSet } from '@/lib/types'
-import { Plus, Trash2, Check, X, Search, ChevronDown, ChevronUp } from 'lucide-react'
+import { Exercise, LoggedExercise, LoggedSet, Routine, RoutineExercise } from '@/lib/types'
+import { Plus, Trash2, Check, X, Search, ChevronDown, ChevronUp, BookOpen } from 'lucide-react'
 
 const CATEGORIES = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Other']
+
+type RoutineWithExercises = Routine & { routine_exercises: RoutineExercise[] }
 
 function emptySet(): LoggedSet {
   return { reps: '', weight: '', weight_unit: 'kg' }
@@ -17,20 +19,28 @@ function emptySet(): LoggedSet {
 export default function LogWorkout() {
   const router = useRouter()
   const [exercises, setExercises] = useState<Exercise[]>([])
+  const [routines, setRoutines] = useState<RoutineWithExercises[]>([])
   const [logged, setLogged] = useState<LoggedExercise[]>([])
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
+  const [showRoutinePicker, setShowRoutinePicker] = useState(false)
+  const [selectedRoutines, setSelectedRoutines] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
 
   useEffect(() => {
-    supabase
-      .from('exercises')
-      .select('*')
-      .order('name')
-      .then(({ data }) => setExercises(data ?? []))
+    Promise.all([
+      supabase.from('exercises').select('*').order('name'),
+      supabase
+        .from('routines')
+        .select('*, routine_exercises(*)')
+        .order('name'),
+    ]).then(([{ data: ex }, { data: r }]) => {
+      setExercises(ex ?? [])
+      setRoutines((r as RoutineWithExercises[]) ?? [])
+    })
   }, [])
 
   const filtered = exercises.filter((e) => {
@@ -43,6 +53,35 @@ export default function LogWorkout() {
     setLogged((prev) => [...prev, { exercise_id: ex.id, exercise_name: ex.name, sets: [emptySet()] }])
     setShowPicker(false)
     setSearch('')
+  }
+
+  function loadRoutines() {
+    const toAdd: LoggedExercise[] = []
+    const existingIds = new Set(logged.map((l) => l.exercise_id))
+
+    selectedRoutines.forEach((routineId) => {
+      const routine = routines.find((r) => r.id === routineId)
+      if (!routine) return
+      const sorted = [...routine.routine_exercises].sort((a, b) => a.sort_order - b.sort_order)
+      sorted.forEach((re) => {
+        if (!existingIds.has(re.exercise_id)) {
+          toAdd.push({ exercise_id: re.exercise_id, exercise_name: re.exercise_name, sets: [emptySet()] })
+          existingIds.add(re.exercise_id)
+        }
+      })
+    })
+
+    setLogged((prev) => [...prev, ...toAdd])
+    setSelectedRoutines(new Set())
+    setShowRoutinePicker(false)
+  }
+
+  function toggleRoutineSelection(id: string) {
+    setSelectedRoutines((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
   }
 
   function removeExercise(i: number) {
@@ -67,10 +106,7 @@ export default function LogWorkout() {
     setLogged((prev) =>
       prev.map((ex, i) =>
         i === exIdx
-          ? {
-              ...ex,
-              sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, [field]: value } : s)),
-            }
+          ? { ...ex, sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, [field]: value } : s)) }
           : ex
       )
     )
@@ -92,7 +128,7 @@ export default function LogWorkout() {
       return
     }
 
-    const rows = logged.flatMap((ex, _) =>
+    const rows = logged.flatMap((ex) =>
       ex.sets.map((s, j) => ({
         workout_id: workout.id,
         exercise_id: ex.exercise_id,
@@ -119,10 +155,21 @@ export default function LogWorkout() {
         </span>
       </div>
 
+      {/* Load from routines button */}
+      {routines.length > 0 && (
+        <button
+          onClick={() => { setShowRoutinePicker(true); setSelectedRoutines(new Set()) }}
+          className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors text-sm font-medium"
+        >
+          <BookOpen size={16} />
+          Load from Routine
+        </button>
+      )}
+
       {logged.length === 0 && (
         <div className="text-center py-10 text-zinc-500 border border-dashed border-zinc-800 rounded-2xl">
           <p>No exercises added yet.</p>
-          <p className="text-sm mt-1">Tap &quot;Add Exercise&quot; to get started.</p>
+          <p className="text-sm mt-1">Load a routine or add exercises manually.</p>
         </div>
       )}
 
@@ -227,6 +274,64 @@ export default function LogWorkout() {
         {saving ? 'Saving...' : 'Save Workout'}
       </button>
 
+      {/* Routine picker modal */}
+      {showRoutinePicker && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-end">
+          <div className="bg-zinc-900 w-full max-w-lg mx-auto rounded-t-3xl max-h-[70vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+              <h2 className="font-semibold text-lg">Load Routines</h2>
+              <button onClick={() => setShowRoutinePicker(false)} className="text-zinc-400 hover:text-white">
+                <X size={22} />
+              </button>
+            </div>
+
+            <p className="text-zinc-500 text-sm px-5 pt-3">Select one or more routines to load.</p>
+
+            <div className="overflow-y-auto flex-1 px-5 py-3 space-y-2">
+              {routines.map((r) => {
+                const selected = selectedRoutines.has(r.id)
+                const sorted = [...r.routine_exercises].sort((a, b) => a.sort_order - b.sort_order)
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => toggleRoutineSelection(r.id)}
+                    className={`w-full text-left px-4 py-3.5 rounded-xl border transition-colors ${
+                      selected
+                        ? 'border-orange-500 bg-orange-500/10 text-white'
+                        : 'border-zinc-800 bg-zinc-800/50 hover:border-zinc-600'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{r.name}</span>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                        selected ? 'border-orange-500 bg-orange-500' : 'border-zinc-600'
+                      }`}>
+                        {selected && <Check size={12} className="text-white" />}
+                      </div>
+                    </div>
+                    {sorted.length > 0 && (
+                      <p className="text-zinc-500 text-xs mt-1">
+                        {sorted.map((re) => re.exercise_name).join(', ')}
+                      </p>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="px-5 py-4 border-t border-zinc-800">
+              <button
+                onClick={loadRoutines}
+                disabled={selectedRoutines.size === 0}
+                className="w-full py-3 rounded-xl bg-orange-500 hover:bg-orange-400 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-semibold transition-colors"
+              >
+                Load {selectedRoutines.size > 0 ? `${selectedRoutines.size} Routine${selectedRoutines.size > 1 ? 's' : ''}` : 'Routine'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Exercise picker modal */}
       {showPicker && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-end">
@@ -250,7 +355,7 @@ export default function LogWorkout() {
                   className="w-full bg-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
                 />
               </div>
-              <div className="flex gap-2 mt-3 overflow-x-auto pb-1 scrollbar-hide">
+              <div className="flex gap-2 mt-3 overflow-x-auto pb-1">
                 {['All', ...CATEGORIES].map((cat) => (
                   <button
                     key={cat}

@@ -40,3 +40,18 @@ export interface LoggedSet {
   weight: string
   weight_unit: 'kg' | 'lbs'
 }
+
+export interface Routine {
+  id: string
+  name: string
+  created_at: string
+  routine_exercises?: RoutineExercise[]
+}
+
+export interface RoutineExercise {
+  id: string
+  routine_id: string
+  exercise_id: string
+  exercise_name: string
+  sort_order: number
+}
