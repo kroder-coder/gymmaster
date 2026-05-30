@@ -65,7 +65,7 @@ export default function LogWorkout() {
       const sorted = [...routine.routine_exercises].sort((a, b) => a.sort_order - b.sort_order)
       sorted.forEach((re) => {
         if (!existingIds.has(re.exercise_id)) {
-          toAdd.push({ exercise_id: re.exercise_id, exercise_name: re.exercise_name, sets: [emptySet()] })
+          toAdd.push({ exercise_id: re.exercise_id, exercise_name: re.exercise_name, sets: [emptySet()], routineName: routine.name })
           existingIds.add(re.exercise_id)
         }
       })
@@ -180,7 +180,12 @@ export default function LogWorkout() {
               className="flex items-center justify-between px-4 py-3 cursor-pointer"
               onClick={() => toggle(exIdx)}
             >
-              <span className="font-semibold">{ex.exercise_name}</span>
+              <div className="flex flex-col gap-0.5">
+                <span className="font-semibold">{ex.exercise_name}</span>
+                {ex.routineName && (
+                  <span className="text-xs text-orange-400/80 font-medium">{ex.routineName}</span>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <span className="text-zinc-500 text-sm">{ex.sets.length} set{ex.sets.length !== 1 ? 's' : ''}</span>
                 {collapsed[exIdx] ? <ChevronDown size={16} className="text-zinc-500" /> : <ChevronUp size={16} className="text-zinc-500" />}

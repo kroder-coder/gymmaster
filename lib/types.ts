@@ -33,6 +33,7 @@ export interface LoggedExercise {
   exercise_id: string
   exercise_name: string
   sets: LoggedSet[]
+  routineName?: string
 }
 
 export interface LoggedSet {
