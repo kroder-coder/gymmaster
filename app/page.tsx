@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { Workout, WorkoutSet } from '@/lib/types'
 import {
   PlusCircle, ChevronRight, ChevronLeft, Flame,
-  Clock, Timer, RefreshCw, Dumbbell, X,
+  Clock, Timer, RefreshCw, Dumbbell, X, BookOpen,
 } from 'lucide-react'
 
 type WorkoutWithSets = Workout & { workout_sets: WorkoutSet[] }
@@ -35,6 +35,21 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 function toDateStr(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+type RoutineGroup = { routineName: string | null; exercises: Record<string, WorkoutSet[]> }
+
+function groupByRoutine(sets: WorkoutSet[]): RoutineGroup[] {
+  const order: (string | null)[] = []
+  const map = new Map<string | null, Record<string, WorkoutSet[]>>()
+  sets.forEach((s) => {
+    const rn = s.routine_name ?? null
+    if (!map.has(rn)) { order.push(rn); map.set(rn, {}) }
+    const exMap = map.get(rn)!
+    if (!exMap[s.exercise_name]) exMap[s.exercise_name] = []
+    exMap[s.exercise_name].push(s)
+  })
+  return order.map((rn) => ({ routineName: rn, exercises: map.get(rn)! }))
 }
 
 function fmtDuration(secs: number) {
@@ -294,13 +309,7 @@ export default function Dashboard() {
           )}
 
           {!loadingSelected && selectedWorkouts.map((w) => {
-            // Group sets → exercise name → set count
-            const exSets: Record<string, number> = {}
-            w.workout_sets?.forEach((s) => {
-              exSets[s.exercise_name] = (exSets[s.exercise_name] ?? 0) + 1
-            })
-            const exEntries = Object.entries(exSets)
-
+            const groups = groupByRoutine(w.workout_sets ?? [])
             const startTime = w.started_at ? new Date(w.started_at) : new Date(w.created_at)
             const timeStr = startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
             const durationLabel = w.duration_seconds && w.duration_seconds > 0
@@ -310,10 +319,10 @@ export default function Dashboard() {
               <Link
                 key={w.id}
                 href={`/history?id=${w.id}`}
-                className="block p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-colors"
+                className="block rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-colors"
               >
                 {/* Workout meta */}
-                <div className="flex items-center gap-3 mb-3">
+                <div className="flex items-center gap-3 px-4 pt-3 pb-2">
                   <span className="flex items-center gap-1 text-zinc-500 text-xs">
                     <Clock size={11} /> {timeStr}
                   </span>
@@ -324,23 +333,39 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {/* Exercise list */}
-                {exEntries.length === 0 ? (
-                  <p className="text-zinc-500 text-sm">No exercises logged</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {exEntries.map(([name, sets]) => (
-                      <div key={name} className="flex items-center justify-between">
-                        <span className="text-sm text-zinc-200">{name}</span>
-                        <span className="text-xs text-zinc-500 tabular-nums">
-                          {sets} {sets === 1 ? 'set' : 'sets'}
-                        </span>
+                {/* Exercise groups */}
+                <div className="px-4 pb-3 space-y-2">
+                  {groups.length === 0 && (
+                    <p className="text-zinc-500 text-sm">No exercises logged</p>
+                  )}
+                  {groups.map(({ routineName, exercises }) => {
+                    const exerciseList = (
+                      <div className="space-y-1.5">
+                        {Object.entries(exercises).map(([name, sets]) => (
+                          <div key={name} className="flex items-center justify-between">
+                            <span className="text-sm text-zinc-200">{name}</span>
+                            <span className="text-xs text-zinc-500 tabular-nums">
+                              {sets.length} {sets.length === 1 ? 'set' : 'sets'}
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    )
+                    return routineName ? (
+                      <div key={routineName} className="rounded-lg border border-orange-500/25 bg-orange-500/5 p-2.5 space-y-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <BookOpen size={12} className="text-orange-400 shrink-0" />
+                          <span className="text-xs font-semibold text-orange-400">{routineName}</span>
+                        </div>
+                        {exerciseList}
+                      </div>
+                    ) : (
+                      <div key="__solo__">{exerciseList}</div>
+                    )
+                  })}
+                </div>
 
-                <p className="text-xs text-orange-400/70 mt-3">Tap to view full workout →</p>
+                <p className="text-xs text-orange-400/70 px-4 pb-3">Tap to view full workout →</p>
               </Link>
             )
           })}
