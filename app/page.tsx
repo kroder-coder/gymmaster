@@ -151,10 +151,10 @@ export default function Dashboard() {
       </Link>
 
       {/* ── Workout Calendar ── */}
-      <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4">
+      <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-3">
 
         {/* Calendar header */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-2">
           <button
             onClick={prevMonth}
             className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
@@ -183,9 +183,9 @@ export default function Dashboard() {
         </div>
 
         {/* Weekday headers */}
-        <div className="grid grid-cols-7 mb-2">
+        <div className="grid grid-cols-7 mb-1">
           {WEEKDAYS.map((d) => (
-            <div key={d} className="text-center text-[11px] font-medium text-zinc-600">
+            <div key={d} className="text-center text-xs font-medium text-zinc-500">
               {d[0]}
             </div>
           ))}
@@ -206,10 +206,10 @@ export default function Dashboard() {
             const isToday = dateStr === todayStr
 
             return (
-              <div key={day} className="flex flex-col items-center py-1 gap-0.5">
+              <div key={day} className="flex flex-col items-center py-0.5 gap-0">
                 {/* Day number */}
                 <div
-                  className={`w-7 h-7 flex items-center justify-center rounded-full text-xs font-medium transition-colors
+                  className={`w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium transition-colors
                     ${isToday
                       ? 'bg-orange-500 text-white font-bold'
                       : count > 0
