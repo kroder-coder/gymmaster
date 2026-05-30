@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Workout, WorkoutSet } from '@/lib/types'
-import { PlusCircle, ChevronRight, Flame, Clock, Timer } from 'lucide-react'
+import { PlusCircle, ChevronRight, Flame, Clock, Timer, RefreshCw } from 'lucide-react'
 
 type WorkoutWithSets = Workout & { workout_sets: WorkoutSet[] }
 
@@ -32,6 +32,7 @@ export default function Dashboard() {
   const [recentWorkouts, setRecentWorkouts] = useState<WorkoutWithSets[]>([])
   const [loading, setLoading] = useState(true)
   const [now, setNow] = useState(new Date())
+  const [quoteOffset, setQuoteOffset] = useState(0)
 
   useEffect(() => {
     async function load() {
@@ -55,7 +56,6 @@ export default function Dashboard() {
   const timeLabel = now.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
   })
 
   const dateLabel = now.toLocaleDateString('en-US', {
@@ -64,7 +64,7 @@ export default function Dashboard() {
     day: 'numeric',
   })
 
-  const quoteIndex = Math.floor(now.getTime() / (5 * 60 * 1000)) % ARNOLD_QUOTES.length
+  const quoteIndex = (Math.floor(now.getTime() / (5 * 60 * 1000)) + quoteOffset) % ARNOLD_QUOTES.length
   const quote = ARNOLD_QUOTES[quoteIndex]
 
   const uniqueExercises = (sets: WorkoutSet[]) =>
@@ -90,6 +90,13 @@ export default function Dashboard() {
       {/* Arnold quote */}
       <div className="relative rounded-2xl bg-zinc-900 border border-zinc-800 px-5 pt-4 pb-5 overflow-hidden">
         <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-orange-500 to-orange-700 rounded-l-2xl" />
+        <button
+          onClick={() => setQuoteOffset((o) => (o + 1) % ARNOLD_QUOTES.length)}
+          className="absolute top-3 right-3 p-1.5 rounded-full text-zinc-600 hover:text-orange-400 hover:bg-zinc-800 transition-colors"
+          title="Next quote"
+        >
+          <RefreshCw size={14} />
+        </button>
         <p className="text-orange-500 text-4xl font-serif leading-none select-none">&ldquo;</p>
         <p className="text-base italic text-zinc-200 leading-relaxed -mt-1">{quote}</p>
         <p className="text-xs font-medium text-orange-400 mt-3 tracking-wide uppercase">
